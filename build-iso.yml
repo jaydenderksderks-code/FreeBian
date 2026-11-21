@@ -1,0 +1,56 @@
+name: Build FreeBian ISO
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune -af
+          df -h /
+
+      - name: Inspect COSMIC repo (diagnostic, never fails the build)
+        continue-on-error: true
+        run: |
+          B=https://rickysarraf.github.io/debian-cosmic
+          curl -fsSL $B/dists/unstable/Release | head -20 || echo "NO Release file"
+          curl -fsSL $B/dists/unstable/main/binary-amd64/Packages.gz | zcat | grep '^Package:' | sort -u | head -100 || echo "NO Packages index"
+
+      - name: Build ISO
+        run: |
+          chmod +x init-freebian.sh build-freebian.sh
+          docker run --rm --privileged -v "$PWD":/work -w /work debian:trixie bash -euxc '
+            export DEBIAN_FRONTEND=noninteractive
+            apt-get update
+            apt-get install -y --no-install-recommends sudo curl gnupg python3 ca-certificates
+            ./init-freebian.sh
+            ./build-freebian.sh
+          '
+
+      - name: Show result
+        run: ls -lh freebian-amd64.iso*; cat freebian-amd64.iso.sha256
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: freebian-build/build.log
+          if-no-files-found: ignore
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: freebian-iso
+          path: |
+            freebian-amd64.iso
+            freebian-amd64.iso.sha256
+          compression-level: 0
+          retention-days: 7

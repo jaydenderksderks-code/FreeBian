@@ -762,6 +762,32 @@ for pkg in $OPTIONAL_PACKAGES; do
 done
 FREEBIAN_HOOK_EOF
 
+cat > config/hooks/live/0150-cosmic-diagnostics.hook.chroot <<'FREEBIAN_HOOK_EOF'
+#!/bin/bash
+# Prints what the COSMIC packages actually installed. Informational only; never fails the build.
+set -e
+
+echo "=== FreeBian diagnostics: COSMIC-related packages available in apt ==="
+apt-cache search cosmic 2>/dev/null | sort | head -100 || true
+
+echo "=== FreeBian diagnostics: installed COSMIC packages ==="
+dpkg -l 2>/dev/null | grep -i -E 'cosmic|greetd|pop-launcher' || true
+
+echo "=== FreeBian diagnostics: dependencies of cosmic-epoch-monorepo ==="
+apt-cache depends cosmic-epoch-monorepo 2>/dev/null | head -60 || true
+
+echo "=== FreeBian diagnostics: key files from cosmic-epoch-monorepo ==="
+dpkg -L cosmic-epoch-monorepo 2>/dev/null \
+    | grep -i -E 'systemd|wayland-sessions|xsessions|/bin/|libexec|greet|\.desktop$' | head -150 || true
+
+echo "=== FreeBian diagnostics: sessions and greeter files on disk ==="
+ls -la /usr/share/wayland-sessions /usr/share/xsessions 2>/dev/null || true
+find /usr/lib/systemd /lib/systemd /etc/systemd /usr/bin /usr/libexec \
+    -iname '*cosmic*' -o -iname '*greet*' 2>/dev/null | sort | head -100 || true
+echo "=== FreeBian diagnostics end ==="
+exit 0
+FREEBIAN_HOOK_EOF
+
 cat > config/hooks/live/0250-locale.hook.chroot <<'FREEBIAN_HOOK_EOF'
 #!/bin/bash
 set -e
@@ -803,18 +829,22 @@ for dm in gdm3 sddm lightdm; do
 done
 
 # --- COSMIC greeter is the display manager ---
-if ! unit_exists cosmic-greeter.service; then
-    echo "FreeBian: cosmic-greeter.service is missing; the COSMIC repository did not provide it" >&2
-    exit 1
-fi
-systemctl enable cosmic-greeter
-if [ ! -L /etc/systemd/system/display-manager.service ]; then
-    for base in /usr/lib/systemd/system /lib/systemd/system; do
-        if [ -e "$base/cosmic-greeter.service" ]; then
-            ln -sf "$base/cosmic-greeter.service" /etc/systemd/system/display-manager.service
-            break
-        fi
-    done
+if unit_exists cosmic-greeter.service; then
+    systemctl enable cosmic-greeter
+    if [ ! -L /etc/systemd/system/display-manager.service ]; then
+        for base in /usr/lib/systemd/system /lib/systemd/system; do
+            if [ -e "$base/cosmic-greeter.service" ]; then
+                ln -sf "$base/cosmic-greeter.service" /etc/systemd/system/display-manager.service
+                break
+            fi
+        done
+    fi
+else
+    echo "FreeBian: WARNING cosmic-greeter.service was not provided by the COSMIC packages." >&2
+    echo "FreeBian: greeter-related files that do exist in the image:" >&2
+    find /usr/lib/systemd /lib/systemd /etc/systemd /usr/bin /usr/libexec /usr/lib /usr/share/wayland-sessions \
+        -iname '*greet*' 2>/dev/null >&2 || true
+    echo "FreeBian: see the 0150 diagnostics above for the full COSMIC file list" >&2
 fi
 systemctl set-default graphical.target
 
